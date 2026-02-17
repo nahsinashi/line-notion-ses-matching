@@ -1,0 +1,29 @@
+{
+  "name": "ses-analysis",
+  "description": "SES営業活動の週次・月次分析レポートを自動生成",
+  "version": "1.0.0",
+  "commands": [
+    {
+      "name": "weekly",
+      "description": "週次レポートを生成",
+      "args": [
+        {
+          "name": "date",
+          "description": "対象週の日付（YYYY-MM-DD形式、省略時は今週）",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "monthly",
+      "description": "月次レポートを生成",
+      "args": [
+        {
+          "name": "month",
+          "description": "対象月（YYYY-MM形式、省略時は今月）",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

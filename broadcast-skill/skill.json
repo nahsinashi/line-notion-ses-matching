@@ -1,0 +1,23 @@
+{
+  "name": "broadcast",
+  "description": "案件・要員の魅力度スコアリング → パートナー配信",
+  "version": "1.0.0",
+  "commands": [
+    {
+      "name": "broadcast",
+      "description": "営業中の案件・要員をスコアリングして配信候補をピックアップ",
+      "args": [
+        {
+          "name": "threshold",
+          "description": "配信候補の最低スコア（0-100、省略時は50）",
+          "required": false
+        },
+        {
+          "name": "type",
+          "description": "対象タイプ（all/cases/staff、省略時はall）",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

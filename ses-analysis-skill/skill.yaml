@@ -1,0 +1,4 @@
+name: ses-analysis
+description: SES営業活動の週次・月次分析レポートを自動生成するスキル
+version: 1.0.0
+author: Claude Code

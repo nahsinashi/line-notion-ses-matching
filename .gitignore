@@ -1,0 +1,32 @@
+# === Claude Code ===
+.claude/
+
+# === 設計ドキュメント（内部用） ===
+PLAN.md
+Excel案件要員抽出フロー.md
+
+# === Python キャッシュ ===
+__pycache__/
+*.pyc
+
+# === 生成レポート（再生成可能） ===
+ses-analysis-skill/weekly_report_*.md
+ses-analysis-skill/monthly_report_*.md
+
+# === 一時ファイル ===
+broadcast-skill/NUL
+broadcast-skill/pickup_result.json
+
+# === 環境依存の設定（シークレット含む可能性） ===
+.env
+broadcast-skill/config.json
+broadcast-skill/broadcast_history.json
+
+# === OS / エディタ ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
