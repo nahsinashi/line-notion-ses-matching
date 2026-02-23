@@ -36,11 +36,11 @@ HEADERS = {
 # データベースID（環境変数またはデフォルト値）
 # 環境変数で上書きする場合: NOTION_DB_提案, NOTION_DB_要員, NOTION_DB_案件, etc.
 DB_IDS = {
-    "提案": os.environ.get("NOTION_DB_提案", "YOUR_PROPOSAL_DB_ID"),
-    "要員": os.environ.get("NOTION_DB_要員", "YOUR_STAFF_DB_ID"),
-    "案件": os.environ.get("NOTION_DB_案件", "YOUR_CASE_DB_ID"),
-    "営業コスト": os.environ.get("NOTION_DB_営業コスト", "YOUR_COST_DB_ID"),
-    "ステータス変更履歴": os.environ.get("NOTION_DB_ステータス変更履歴", "YOUR_STATUS_HISTORY_DB_ID")
+    "提案": os.environ.get("NOTION_DB_提案", "2c2c01f8-7769-8032-8e3a-c1bf4e933a67"),
+    "要員": os.environ.get("NOTION_DB_要員", "2c2c01f8-7769-80c1-9af9-c5b101b91520"),
+    "案件": os.environ.get("NOTION_DB_案件", "2c2c01f8-7769-8013-8dc0-ea41dac2c119"),
+    "営業コスト": os.environ.get("NOTION_DB_営業コスト", "61b10c6d-e554-4c07-8214-2bcff662374a"),
+    "ステータス変更履歴": os.environ.get("NOTION_DB_ステータス変更履歴", "35fd3c53-5d51-414f-b12f-c85521b3321b")
 }
 
 # 対象期間
@@ -756,8 +756,10 @@ def generate_report():
         report += f"| 月間予算時間 | {cost_analysis.get('月間予算時間', '-')} h |\n"
         report += f"| 予算消化率 | {cost_analysis.get('予算消化率', '-')} % |\n"
         report += f"| 時間単価 | ¥{cost_analysis.get('時間単価', '-')}/h |\n"
-        report += f"| 実績金額 | ¥{cost_analysis.get('実績金額', '-'):,} |\n"
-        report += f"| 予算金額 | ¥{cost_analysis.get('予算金額', '-'):,} |\n\n"
+        jisseki = cost_analysis.get('実績金額', '-')
+        yosan = cost_analysis.get('予算金額', '-')
+        report += f"| 実績金額 | ¥{jisseki:,} |\n" if isinstance(jisseki, (int, float)) else f"| 実績金額 | {jisseki} |\n"
+        report += (f"| 予算金額 | ¥{yosan:,} |\n\n" if isinstance(yosan, (int, float)) else f"| 予算金額 | {yosan} |\n\n")
 
     # =============================================
     # セクション2: 🎯 営業アクションサマリー

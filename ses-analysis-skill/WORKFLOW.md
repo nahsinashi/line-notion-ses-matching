@@ -72,7 +72,7 @@
 2. **営業コスト管理DBに入力**
    - 前週（月〜日）の累積稼働時間を入力
    - 週間予算時間を入力（通常40h）
-   - 時間単価を入力（通常¥5,000/h）
+   - 時間単価を入力（通常¥3,750/h）
    - 備考があれば記入
 
 #### 2.2 レポート生成（月曜日 9:30-10:00）
@@ -80,7 +80,7 @@
 **Claude Code を使用する場合**:
 ```bash
 # ターミナルで実行
-cd C:\Users\user\claude-workspace\_skills\ses-analysis-skill
+cd C:\Users\user\claude-workspace\line-notion-matching\ses-analysis-skill
 claude-code
 
 # Claude Code 内で
@@ -210,7 +210,7 @@ claude-code
 | **週終了日** | その週の日曜日 |
 | **累積稼働時間** | チーム全体の実績時間（例: 38.0） |
 | **週間予算時間** | 通常40h |
-| **時間単価** | 通常¥5,000/h |
+| **時間単価** | 通常¥3,750/h |
 
 ### ⚠️ 禁止事項
 

@@ -89,12 +89,12 @@ SES仲介営業における案件・要員・提案状況を週次・月次で�
 
 ## 技術スタック
 
-- **言語**: Python
+- **言語**: Python 3
 - **ライブラリ**:
-  - `notion-client`: Notion API操作
-  - `pandas`: データ分析
-  - `matplotlib` / `plotly`: グラフ生成
+  - `requests`: Notion API操作（REST API直接呼び出し）
   - `datetime`: 日付計算
+- **グラフ生成**: QuickChart.io（URL生成方式）
+- **Notion API**: v2022-06-28
 
 ## 要件定義
 
@@ -124,7 +124,7 @@ Error: No data found for the specified period
 Warning: Graph generation failed, continuing with text-only report
 ```
 
-→ テキストのみでレポートが生成されます。Pythonライブラリのインストール状況を確認してください。
+→ テキストのみでレポートが生成されます。QuickChart.ioへのネットワーク接続を確認してください。
 
 ## バージョン
 

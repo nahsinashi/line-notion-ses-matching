@@ -34,11 +34,11 @@ HEADERS = {
 
 # データベースID（環境変数またはデフォルト値）
 DB_IDS = {
-    "提案": os.environ.get("NOTION_DB_提案", "YOUR_PROPOSAL_DB_ID"),
-    "要員": os.environ.get("NOTION_DB_要員", "YOUR_STAFF_DB_ID"),
-    "案件": os.environ.get("NOTION_DB_案件", "YOUR_CASE_DB_ID"),
-    "営業コスト": os.environ.get("NOTION_DB_営業コスト", "YOUR_COST_DB_ID"),
-    "ステータス変更履歴": os.environ.get("NOTION_DB_ステータス変更履歴", "YOUR_STATUS_HISTORY_DB_ID")
+    "提案": os.environ.get("NOTION_DB_提案", "2c2c01f8-7769-8032-8e3a-c1bf4e933a67"),
+    "要員": os.environ.get("NOTION_DB_要員", "2c2c01f8-7769-80c1-9af9-c5b101b91520"),
+    "案件": os.environ.get("NOTION_DB_案件", "2c2c01f8-7769-8013-8dc0-ea41dac2c119"),
+    "営業コスト": os.environ.get("NOTION_DB_営業コスト", "61b10c6d-e554-4c07-8214-2bcff662374a"),
+    "ステータス変更履歴": os.environ.get("NOTION_DB_ステータス変更履歴", "35fd3c53-5d51-414f-b12f-c85521b3321b")
 }
 
 # 対象期間（デフォルト値、実行時に上書きされる）
@@ -1331,16 +1331,29 @@ def create_notion_page_monthly(report_content, parent_page_id):
             })
         # 画像
         elif line.startswith('![') and '](' in line and line.endswith(')'):
+            alt_start = line.index('[') + 1
+            alt_end = line.index(']')
+            alt_text = line[alt_start:alt_end]
             url_start = line.index('](') + 2
             url = line[url_start:-1]
-            blocks.append({
-                "object": "block",
-                "type": "image",
-                "image": {
-                    "type": "external",
-                    "external": {"url": url}
-                }
-            })
+            if len(url) <= 2000:
+                blocks.append({
+                    "object": "block",
+                    "type": "image",
+                    "image": {
+                        "type": "external",
+                        "external": {"url": url}
+                    }
+                })
+            else:
+                # URL が2000文字を超える場合はブックマークで代替
+                blocks.append({
+                    "object": "block",
+                    "type": "bookmark",
+                    "bookmark": {
+                        "url": url[:2000]
+                    }
+                })
         # 区切り線
         elif line == '---':
             blocks.append({
@@ -1493,8 +1506,9 @@ def update_latest_monthly_report_page(report_content):
                     title_array = title_prop.get("title", [])
                     if title_array:
                         title = title_array[0].get("text", {}).get("content", "")
-                        # 「月」を含む月次レポートタイトルを検索
-                        if "月" in title and "週" not in title:
+                        # 「YYYY年M月」形式の月次レポートを検索（履歴ページは除外）
+                        import re
+                        if re.match(r'^\d{4}年\d{1,2}月$', title):
                             existing_report_page_id = page_id
                             print(f"  📦 既存のレポート「{title}」を履歴に移動中...")
                             break

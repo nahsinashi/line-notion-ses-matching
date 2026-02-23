@@ -24,7 +24,7 @@ NotionのSES営業データベース（提案DB、要員DB、案件DB、営業�
 
 2. **レポート生成実行**
    ```bash
-   cd C:\Users\user\claude-workspace\_skills\ses-analysis-skill
+   cd C:\Users\user\claude-workspace\line-notion-matching\ses-analysis-skill
    python generate_weekly.py [週開始日] [--no-notion]
    ```
    - デフォルト: Notion投稿 + ファイル保存
@@ -46,7 +46,7 @@ NotionのSES営業データベース（提案DB、要員DB、案件DB、営業�
 
 3. **レポート生成実行**
    ```bash
-   cd C:\Users\user\claude-workspace\_skills\ses-analysis-skill
+   cd C:\Users\user\claude-workspace\line-notion-matching\ses-analysis-skill
    python generate_monthly.py [対象月] [--notion]
    ```
 

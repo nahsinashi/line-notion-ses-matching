@@ -77,6 +77,12 @@ SES仲介営業における案件・要員・提案状況を週次・月次で�
 - **プロパティ「提案作成日」**（created_time型）
 - **ステータス**: 候補、提案中、面談、結果待ち、見送り、辞退、決定
 
+#### 📝 ステータス変更履歴DB
+
+**Notion DB ID**: `35fd3c53-5d51-414f-b12f-c85521b3321b`
+
+- ROI分析のアクション件数算出に使用（候補→提案中、提案中→面談、→決定 等の遷移回数）
+
 #### 📊 分析レポート親ページ
 
 **Notion Page ID**: `8d52d3fee1344c549e6715d24f7b8b4e`
@@ -167,10 +173,9 @@ SES仲介営業における案件・要員・提案状況を週次・月次で�
 ## 5. グラフ・可視化仕様
 
 ### 実装方式
-- **Python**（matplotlib / plotly）で高品質なグラフ画像を生成
-- Notionにアップロードしてページ内に埋め込み
-- 解像度: 最低 300 DPI
-- 日本語フォント対応必須
+- **QuickChart.io** のURL生成方式でグラフを作成
+- NotionページにはQuickChart.ioの外部URLとして埋め込み
+- ローカルの画像生成・アップロードは不要
 
 ### 週次レポート用グラフ
 
@@ -199,12 +204,14 @@ SES仲介営業における案件・要員・提案状況を週次・月次で�
 
 ### 技術スタック
 
-- **言語**: Python
+- **言語**: Python 3
 - **ライブラリ**:
-  - `notion-client`: Notion API操作
-  - `pandas`: データ分析・集計
-  - `matplotlib` / `plotly`: グラフ生成
+  - `requests`: Notion API操作（REST API直接呼び出し）
   - `datetime`: 日付計算
+  - `collections`: データ集計
+  - `urllib.parse`: QuickChart.io URL生成
+- **グラフ生成**: QuickChart.io（URL生成方式）
+- **Notion API**: v2022-06-28
 
 ### 実行フロー
 
@@ -255,15 +262,14 @@ if report_type == "weekly":
 #### フェーズ3: グラフ生成
 
 ```python
-# 1. グラフ生成
-graphs = []
-graphs.append(create_funnel_chart(proposals))
-graphs.append(create_trend_chart(proposals))
-graphs.append(create_profit_chart(proposals))
+# 1. QuickChart.io URLでグラフ生成
+graph_urls = []
+graph_urls.append(create_quickchart_url("bar", cost_data))
+graph_urls.append(create_quickchart_url("pie", skill_data))
 # ... 他のグラフ
 
 # 2. 進捗表示
-print(f"✓ グラフ生成完了（{len(graphs)}枚）")
+print(f"✓ グラフURL生成完了（{len(graph_urls)}枚）")
 ```
 
 #### フェーズ4: 確認
@@ -285,12 +291,8 @@ response = input("\nNotionに出力しますか？ (yes/no): ")
 
 ```python
 if response.lower() == "yes":
-    # 1. グラフアップロード
+    # 1. Markdownレポート生成（QuickChart.io URLを含む）
     print("\nNotionレポートを生成中...")
-    graph_urls = upload_graphs_to_notion(graphs)
-    print("✓ グラフ画像アップロード完了")
-
-    # 2. Markdownレポート生成
     markdown = generate_report_markdown(data, graph_urls)
 
     # 3. 最新レポートページ更新
@@ -385,12 +387,12 @@ except NotionAPIError as e:
     sys.exit(1)
 
 try:
-    # グラフ生成
-    graphs = generate_graphs(data)
+    # グラフURL生成（QuickChart.io）
+    graph_urls = generate_quickchart_urls(data)
 except Exception as e:
-    print(f"⚠️ グラフ生成に失敗: {e}")
+    print(f"⚠️ グラフURL生成に失敗: {e}")
     print("テキストのみでレポートを生成します")
-    graphs = []
+    graph_urls = []
 
 # データ不足の警告
 if len(new_proposals) == 0:
