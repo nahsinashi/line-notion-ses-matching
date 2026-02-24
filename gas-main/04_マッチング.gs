@@ -132,6 +132,29 @@ function showMatchingQueue() {
 }
 
 // ============================================================
+// 同一情報元チェック
+// ============================================================
+
+/**
+ * 案件元企業と要員元企業が同一かを判定
+ * 表記揺れを考慮し、空白・株式会社等を除去して比較
+ * @param {string} source1 - 案件元企業名
+ * @param {string} source2 - 要員元企業名
+ * @returns {boolean} 同一情報元の場合true
+ */
+function isSameSource(source1, source2) {
+  if (!source1 || !source2) return false;
+
+  const normalize = (name) => name
+    .replace(/[\s　]/g, "")               // 空白除去
+    .replace(/株式会社|（株）|\(株\)/g, "") // 株式会社表記除去
+    .replace(/合同会社/g, "")              // 合同会社表記除去
+    .toLowerCase();
+
+  return normalize(source1) === normalize(source2);
+}
+
+// ============================================================
 // マッチング処理本体
 // ============================================================
 
@@ -158,8 +181,14 @@ function matchStaffWithCases(staffPageId, staffData) {
   
   // 各案件とマッチング判定
   cases.forEach(caseItem => {
+    // 同一情報元チェック：案件元企業と要員元企業が同じならスキップ
+    if (isSameSource(caseItem.data.元企業, staffData.元企業)) {
+      Logger.log("⏭️ 同一情報元スキップ: " + caseItem.data.元企業);
+      return;
+    }
+
     const matchResult = executeMatching(caseItem, staffData, skillSheetDoc);
-    
+
     if (matchResult && matchResult.score >= 60) {
       // 提案DBに候補として登録
       createMatchCandidate(caseItem.id, staffPageId, matchResult);
@@ -188,6 +217,12 @@ function matchCaseWithStaff(casePageId, caseData) {
 
   // 各要員とマッチング判定
   staffList.forEach(staff => {
+    // 同一情報元チェック：案件元企業と要員元企業が同じならスキップ
+    if (isSameSource(caseData.元企業, staff.data.元企業)) {
+      Logger.log("⏭️ 同一情報元スキップ: " + staff.data.元企業);
+      return;
+    }
+
     // 要員のスキルシート取得
     const fileId = getSkillSheetFileId(staff.id);
     const skillSheetDoc = fileId ? getSkillSheetForAI(fileId) : null;
@@ -256,7 +291,8 @@ function extractItemData(page, type) {
       スキル要件: props["スキル要件"]?.multi_select?.map(s => s.name) || [],
       スキル詳細: props["スキル詳細"]?.rich_text?.[0]?.plain_text || "",
       営業単価: props["営業単価"]?.number || null,
-      原文単価: props["原文単価"]?.number || null
+      原文単価: props["原文単価"]?.number || null,
+      元企業: props["案件元企業"]?.rich_text?.[0]?.plain_text || ""
     };
   } else {
     return {
@@ -265,7 +301,8 @@ function extractItemData(page, type) {
       スキル概要: props["スキル概要"]?.multi_select?.map(s => s.name) || [],
       スキル詳細: props["スキル詳細"]?.rich_text?.[0]?.plain_text || "",
       営業単価: props["営業単価"]?.number || null,
-      希望単価: props["希望単価"]?.number || null
+      希望単価: props["希望単価"]?.number || null,
+      元企業: props["要員元企業"]?.rich_text?.[0]?.plain_text || ""
     };
   }
 }
