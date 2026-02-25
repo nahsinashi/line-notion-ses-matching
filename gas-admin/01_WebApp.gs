@@ -376,8 +376,9 @@ function processTextMessage(text, userId, result) {
   result.registrations = [];
 
   // Step 2: 各結果を処理
+  // ※原文はAI出力ではなく元テキストを直接使用（トークン上限による切り詰め防止）
   for (const item of judgmentResults) {
-    const regResult = processJudgmentItem(item, userId);
+    const regResult = processJudgmentItem(item, userId, text);
     result.registrations.push(regResult);
   }
 
@@ -393,10 +394,13 @@ function processTextMessage(text, userId, result) {
 function callAIJudgment(text) {
   const prompt = buildJudgmentPrompt(text);
 
+  // 原文コピー不要になったためトークン上限を削減（判定結果のみで十分）
+  const maxTokens = 1000;
+
   // 1. Gemini 2.0 Flashで判定（メイン）
   if (GEMINI_API_KEY) {
     console.log('🤖 Gemini 2.0 Flashで判定中...');
-    const geminiResponse = callGeminiFlash(prompt, 2000);
+    const geminiResponse = callGeminiFlash(prompt, maxTokens);
 
     if (geminiResponse) {
       const parsed = parseAIResponseAsJSON(geminiResponse);
@@ -411,7 +415,7 @@ function callAIJudgment(text) {
   // 2. Claude Haikuでフォールバック
   if (CLAUDE_API_KEY) {
     console.log('🤖 Claude Haikuでフォールバック判定中...');
-    const claudeResponse = callClaudeHaiku(prompt, 2000);
+    const claudeResponse = callClaudeHaiku(prompt, maxTokens);
 
     if (claudeResponse) {
       const parsed = parseAIResponseAsJSON(claudeResponse);
@@ -437,7 +441,7 @@ function buildJudgmentPrompt(text) {
 【メッセージ】
 ${text}
 
-【出力形式】JSONのみ出力すること
+【出力形式】JSONのみ出力すること（原文は不要、判定結果のみ）
 {
   "results": [
     {
@@ -445,7 +449,7 @@ ${text}
       "企業名": "不明な場合は空文字",
       "担当者": "不明な場合は空文字",
       "initial": "要員の場合はイニシャル2文字、それ以外は空文字",
-      "原文": "メッセージ全文をそのまま完全にコピー（省略禁止）"
+      "reason": "除外の場合は簡潔な理由"
     }
   ]
 }
@@ -539,20 +543,27 @@ ${text}
 
 【複数の案件/要員がある場合】
 - results配列に複数入れる
-- 各オブジェクトの「原文」にはメッセージ全文を入れる`;
+- 「原文」フィールドは不要（呼び出し側で元テキストを保持済み）`;
 }
 
 // parseAIResponse は 04_AI_Clients.gs の parseAIResponseAsJSON に統合済み
 
 /**
  * 判定結果1件を処理（既存GAS呼び出し）
+ * @param {Object} item - AI判定結果の1件
+ * @param {string} userId - LINE UserID
+ * @param {string} originalText - LINEから受信した元テキスト（AI出力ではなく原文そのもの）
  */
-function processJudgmentItem(item, userId) {
+function processJudgmentItem(item, userId, originalText) {
   const regResult = {
     type: item.type,
     initial: item.initial || '',
     status: 'pending'
   };
+
+  // 原文はAI出力ではなく元テキストを使用
+  // （AIのトークン上限で原文が切り詰められる問題を回避）
+  const rawText = originalText || item.原文 || item.text || '';
 
   try {
     if (item.type === '案件') {
@@ -560,7 +571,7 @@ function processJudgmentItem(item, userId) {
       const response = callExistingGas({
         '登録タイプ': '案件を登録',
         '担当者': '髙梨',
-        '原文': item.原文 || item.text || '',
+        '原文': rawText,
         'userId': userId
       });
       regResult.status = 'success';
@@ -572,7 +583,7 @@ function processJudgmentItem(item, userId) {
       const response = callExistingGas({
         '登録タイプ': '要員を一時保存',
         '担当者': '髙梨',
-        '原文': item.原文 || item.text || '',
+        '原文': rawText,
         'userId': userId,
         'initial': item.initial || 'XX'
       });
