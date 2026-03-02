@@ -12,14 +12,23 @@ import requests
 from datetime import datetime, timedelta
 from collections import defaultdict
 from urllib.parse import quote
+from pathlib import Path
+from dotenv import load_dotenv
 
 # Windows環境でのUnicode出力対応
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
+# .envファイルを読み込み（同階層 → 親階層の順に探索）
+_script_dir = Path(__file__).resolve().parent
+for _env_dir in [_script_dir, _script_dir.parent, *_script_dir.parents]:
+    _env_path = _env_dir / ".env"
+    if _env_path.is_file():
+        load_dotenv(_env_path)
+        break
+
 # Notion API設定
-# 環境変数から読み込み: NOTION_API_KEY
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 if not NOTION_API_KEY:
     print("❌ 環境変数 NOTION_API_KEY が設定されていません。")
@@ -60,18 +69,31 @@ ACTION_VALUES = {
 }
 
 def query_database(db_id, filter_params=None):
-    """Notionデータベースをクエリ"""
+    """Notionデータベースをクエリ（ページネーション対応）"""
     url = f"https://api.notion.com/v1/databases/{db_id}/query"
-    payload = {"page_size": 100}
-    if filter_params:
-        payload["filter"] = filter_params
+    all_results = []
+    start_cursor = None
 
-    response = requests.post(url, headers=HEADERS, json=payload)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"❌ エラー: {response.status_code} - {response.text}")
-        return None
+    while True:
+        payload = {"page_size": 100}
+        if filter_params:
+            payload["filter"] = filter_params
+        if start_cursor:
+            payload["start_cursor"] = start_cursor
+
+        response = requests.post(url, headers=HEADERS, json=payload)
+        if response.status_code != 200:
+            print(f"❌ エラー: {response.status_code} - {response.text}")
+            return None
+
+        data = response.json()
+        all_results.extend(data.get("results", []))
+
+        if not data.get("has_more"):
+            break
+        start_cursor = data.get("next_cursor")
+
+    return {"results": all_results}
 
 def get_property_value(page, property_name):
     """ページプロパティから値を取得"""
@@ -101,8 +123,31 @@ def get_property_value(page, property_name):
     elif prop_type == "multi_select":
         multi_select = prop.get("multi_select", [])
         return [item.get("name", "") for item in multi_select]
+    elif prop_type == "relation":
+        relations = prop.get("relation", [])
+        return [r.get("id", "") for r in relations]
     else:
         return ""
+
+def update_notion_status(page_id, new_status):
+    """Notionページのステータスを更新"""
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    payload = {
+        "properties": {
+            "ステータス": {
+                "select": {
+                    "name": new_status
+                }
+            }
+        }
+    }
+    response = requests.patch(url, headers=HEADERS, json=payload)
+    if response.status_code == 200:
+        print(f"  ✅ ステータス更新: {page_id[:8]}... → {new_status}")
+        return True
+    else:
+        print(f"  ❌ ステータス更新失敗: {page_id[:8]}... - {response.status_code}")
+        return False
 
 def analyze_monthly_cost():
     """月次営業コスト分析"""
@@ -273,10 +318,29 @@ def analyze_status_changes():
     results = data.get("results", [])
     print(f"  取得件数: {len(results)}件")
 
+    # 月内の全週を取得（月曜日開始）— 週別遷移集計用
+    weekly_bins = []
+    current = MONTH_START
+    week_num = 1
+    while current <= MONTH_END:
+        week_start = current - timedelta(days=current.weekday())
+        week_end = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        actual_start = max(week_start, MONTH_START)
+        actual_end = min(week_end, MONTH_END)
+        weekly_bins.append({
+            "num": week_num,
+            "start": actual_start,
+            "end": actual_end,
+            "label": f"第{week_num}週",
+        })
+        current = week_end + timedelta(seconds=1)
+        week_num += 1
+
     # 月間のステータス変化を集計
     analysis = {
         "提案": {
             "changes": defaultdict(int),  # "候補→提案中": 3 のような形式
+            "weekly_changes": [defaultdict(int) for _ in weekly_bins],  # 週別遷移カウント
             "離脱_提案中": {"見送り": 0, "辞退": 0},
             "離脱_面談": {"見送り": 0, "辞退": 0}
         },
@@ -285,7 +349,8 @@ def analyze_status_changes():
         },
         "案件": {
             "changes": defaultdict(int)
-        }
+        },
+        "weekly_labels": [w["label"] for w in weekly_bins]
     }
 
     for page in results:
@@ -316,6 +381,12 @@ def analyze_status_changes():
 
         if db_type == "提案":
             analysis["提案"]["changes"][change_key] += 1
+
+            # 週別遷移カウント
+            for i, wb in enumerate(weekly_bins):
+                if wb["start"] <= change_dt <= wb["end"]:
+                    analysis["提案"]["weekly_changes"][i][change_key] += 1
+                    break
 
             # 離脱分析（提案中・面談からの見送り・辞退のみ）
             if old_status == "提案中" and new_status in ["見送り", "辞退"]:
@@ -551,6 +622,149 @@ def analyze_skill_match():
         "youin_skills": dict(youin_skills)
     }
 
+def detect_and_terminate_stagnant():
+    """滞留レコードを検出し自動的に「終了」ステータスに変更する
+
+    処理順序:
+    1. 要員DB: 営業中 + 2週間以上滞留 → 終了
+    2. 案件DB: 営業中 + 2週間以上滞留 → 終了
+    3. 提案DB: 提案中 + 1週間以上滞留 → 終了
+    4. 提案DB: 候補 + 紐付き要員/案件がステップ1-2で終了 → 終了（連鎖）
+    """
+    print("\n🔄 滞留レコードの自動終了処理を開始...")
+
+    one_week_ago = MONTH_END - timedelta(days=7)
+    two_weeks_ago = MONTH_END - timedelta(days=14)
+
+    results = {
+        "要員_terminated": [],
+        "案件_terminated": [],
+        "提案中_terminated": [],
+        "候補_terminated": [],
+        "要員_remaining": [],
+        "案件_remaining": [],
+        "候補_remaining": [],
+    }
+
+    terminated_youin_ids = set()
+    terminated_anken_ids = set()
+
+    # Step 1: 要員DB - 営業中 + 2週間以上 → 終了
+    youin_filter = {"property": "ステータス", "select": {"does_not_equal": "終了"}}
+    youin_data = query_database(DB_IDS["要員"], filter_params=youin_filter)
+    if youin_data:
+        for page in youin_data.get("results", []):
+            status = get_property_value(page, "ステータス")
+            created_time = get_property_value(page, "要員回収日")
+            if not created_time or status == "オファー":
+                continue
+            created_dt = datetime.fromisoformat(created_time.replace('Z', '+00:00')).replace(tzinfo=None)
+            if created_dt.date() < two_weeks_ago.date():
+                days_passed = (MONTH_END.date() - created_dt.date()).days
+                item = {
+                    "page_id": page["id"],
+                    "name": get_property_value(page, "要員名"),
+                    "date": created_time[:10],
+                    "days": days_passed,
+                    "status": status,
+                    "担当": get_property_value(page, "担当"),
+                }
+                if status == "営業中":
+                    if update_notion_status(page["id"], "終了"):
+                        terminated_youin_ids.add(page["id"])
+                        results["要員_terminated"].append(item)
+                else:
+                    results["要員_remaining"].append(item)
+
+    # Step 2: 案件DB - 営業中 + 2週間以上 → 終了
+    anken_data = query_database(DB_IDS["案件"])
+    if anken_data:
+        for page in anken_data.get("results", []):
+            status = get_property_value(page, "ステータス")
+            created_time = get_property_value(page, "案件回収日")
+            if not created_time or status in ["決定", "終了"]:
+                continue
+            created_dt = datetime.fromisoformat(created_time.replace('Z', '+00:00')).replace(tzinfo=None)
+            if created_dt.date() < two_weeks_ago.date():
+                days_passed = (MONTH_END.date() - created_dt.date()).days
+                item = {
+                    "page_id": page["id"],
+                    "name": get_property_value(page, "入力不要"),
+                    "date": created_time[:10],
+                    "days": days_passed,
+                    "status": status,
+                    "担当": get_property_value(page, "担当"),
+                }
+                if status == "営業中":
+                    if update_notion_status(page["id"], "終了"):
+                        terminated_anken_ids.add(page["id"])
+                        results["案件_terminated"].append(item)
+                else:
+                    results["案件_remaining"].append(item)
+
+    # Step 3 & 4: 提案DB
+    teian_data = query_database(DB_IDS["提案"])
+    if teian_data:
+        for page in teian_data.get("results", []):
+            status = get_property_value(page, "ステータス")
+
+            # Step 3: 提案中 + 1週間以上 → 終了
+            if status == "提案中":
+                teian_date = get_property_value(page, "提案日")
+                if teian_date:
+                    teian_dt = datetime.fromisoformat(teian_date)
+                    if teian_dt.date() < one_week_ago.date():
+                        days_passed = (MONTH_END.date() - teian_dt.date()).days
+                        item = {
+                            "page_id": page["id"],
+                            "name": get_property_value(page, "提案名"),
+                            "date": teian_date,
+                            "days": days_passed,
+                            "案件担当": get_property_value(page, "案件担当"),
+                            "要員担当": get_property_value(page, "要員担当"),
+                        }
+                        if update_notion_status(page["id"], "終了"):
+                            results["提案中_terminated"].append(item)
+
+            # 候補の滞留チェック + 連鎖終了
+            elif status == "候補":
+                created_time = get_property_value(page, "提案作成日")
+                youin_ids = get_property_value(page, "要員DB") or []
+                anken_ids = get_property_value(page, "案件DB") or []
+                youin_id_set = set(youin_ids) if isinstance(youin_ids, list) else set()
+                anken_id_set = set(anken_ids) if isinstance(anken_ids, list) else set()
+
+                # Step 4: 連鎖終了（紐付き要員/案件が終了）
+                if youin_id_set & terminated_youin_ids or anken_id_set & terminated_anken_ids:
+                    item = {
+                        "page_id": page["id"],
+                        "name": get_property_value(page, "提案名"),
+                        "date": created_time[:10] if created_time else "",
+                        "案件担当": get_property_value(page, "案件担当"),
+                        "要員担当": get_property_value(page, "要員担当"),
+                    }
+                    if update_notion_status(page["id"], "終了"):
+                        results["候補_terminated"].append(item)
+                # 候補滞留（1週間以上、連鎖対象外）
+                elif created_time:
+                    created_dt = datetime.fromisoformat(created_time.replace('Z', '+00:00')).replace(tzinfo=None)
+                    if created_dt.date() < one_week_ago.date():
+                        days_passed = (MONTH_END.date() - created_dt.date()).days
+                        results["候補_remaining"].append({
+                            "page_id": page["id"],
+                            "name": get_property_value(page, "提案名"),
+                            "date": created_time[:10],
+                            "days": days_passed,
+                            "案件担当": get_property_value(page, "案件担当"),
+                            "要員担当": get_property_value(page, "要員担当"),
+                        })
+
+    total = sum(len(results[k]) for k in ["要員_terminated", "案件_terminated", "提案中_terminated", "候補_terminated"])
+    print(f"  合計 {total}件を自動終了しました。\n")
+
+    return results
+
+
 def generate_monthly_report():
     """月次レポートを生成"""
     print(f"\n{'='*60}")
@@ -564,8 +778,11 @@ def generate_monthly_report():
     status_change_analysis = analyze_status_changes()
     roi_analysis = analyze_monthly_roi(cost_analysis, status_change_analysis)
 
+    # 滞留レコードの自動終了処理
+    terminate_results = detect_and_terminate_stagnant()
+
     print(f"\n{'='*60}")
-    print("✅ データ取得完了")
+    print("✅ データ取得・自動終了処理完了")
     print(f"{'='*60}\n")
 
     # レポート出力
@@ -890,30 +1107,41 @@ def generate_monthly_report():
 
     weeks = trend_analysis["weeks"]
     teian_changes = status_change_analysis.get("提案", {}).get("changes", {})
+    weekly_changes = status_change_analysis.get("提案", {}).get("weekly_changes", [])
 
-    # Graph C: 提案プロセス積み上げ棒グラフ（週別推移）
+    # Graph C: 提案プロセス積み上げ棒グラフ（週別推移）— ステータス遷移ベース
+    weekly_koho_teian = [wc.get("候補→提案中", 0) for wc in weekly_changes]
+    weekly_teian_mendan = [wc.get("提案中→面談", 0) for wc in weekly_changes]
+    # AI候補生成数から遷移済み件数を差し引いた残数を「未処理候補」として表示
+    weekly_unprocessed = []
+    for i, w in enumerate(weeks):
+        koho_teian = weekly_koho_teian[i] if i < len(weekly_koho_teian) else 0
+        teian_mendan = weekly_teian_mendan[i] if i < len(weekly_teian_mendan) else 0
+        unprocessed = max(0, w["提案新規"] - koho_teian - teian_mendan)
+        weekly_unprocessed.append(unprocessed)
+
     process_chart_config = {
         "type": "bar",
         "data": {
             "labels": [w["label"] for w in weeks],
             "datasets": [
                 {
-                    "label": "候補（未処理）",
-                    "data": [w["提案_候補"] for w in weeks],
+                    "label": "AI候補生成",
+                    "data": [w["提案新規"] for w in weeks],
                     "backgroundColor": "rgba(201, 203, 207, 0.7)",
                     "borderColor": "rgb(201, 203, 207)",
                     "borderWidth": 1
                 },
                 {
-                    "label": "提案中",
-                    "data": [w["提案_提案中"] for w in weeks],
+                    "label": "候補→提案中",
+                    "data": weekly_koho_teian,
                     "backgroundColor": "rgba(54, 162, 235, 0.7)",
                     "borderColor": "rgb(54, 162, 235)",
                     "borderWidth": 1
                 },
                 {
-                    "label": "面談以降",
-                    "data": [w["提案_面談"] for w in weeks],
+                    "label": "提案中→面談",
+                    "data": weekly_teian_mendan,
                     "backgroundColor": "rgba(75, 192, 192, 0.7)",
                     "borderColor": "rgb(75, 192, 192)",
                     "borderWidth": 1
@@ -923,13 +1151,13 @@ def generate_monthly_report():
         "options": {
             "title": {
                 "display": True,
-                "text": "提案プロセス内訳（候補 vs 人的判断済み）週別推移",
+                "text": "提案プロセス推移（遷移実績ベース）週別",
                 "fontSize": 16
             },
             "scales": {
-                "xAxes": [{"stacked": True}],
+                "xAxes": [{"stacked": False}],
                 "yAxes": [{
-                    "stacked": True,
+                    "stacked": False,
                     "ticks": {"beginAtZero": True},
                     "scaleLabel": {"display": True, "labelString": "件数"}
                 }]
@@ -952,32 +1180,37 @@ def generate_monthly_report():
     report += f"| 人的提案数 | {jinteki_count}件 | 候補→提案中（人的判断で精査・提案） |\n"
     report += f"| 有効提案数 | {yuuko_count}件 | 提案中→面談以降（実質的な進捗） |\n\n"
 
-    # 転換率（メインKPI）
+    # 転換率（メインKPI）— ステータス変更履歴DBの遷移実績ベース
     report += "### 転換率（メインKPI）\n\n"
 
-    total_koho_count = sum(w.get("提案_候補", 0) for w in weeks)
-    total_teian_chu_count = sum(w["提案_提案中"] for w in weeks)
-    total_koho_teian = total_koho_count + total_teian_chu_count
-    avg_koho_to_teian = round((total_teian_chu_count / total_koho_teian * 100), 1) if total_koho_teian > 0 else 0
+    koho_to_teian_count = teian_changes.get("候補→提案中", 0)
+    teian_to_mendan_count = teian_changes.get("提案中→面談", 0)
+    koho_to_teian_rate = round((koho_to_teian_count / total_teian * 100), 1) if total_teian > 0 else 0
+    teian_to_mendan_rate = round((teian_to_mendan_count / koho_to_teian_count * 100), 1) if koho_to_teian_count > 0 else 0
 
     report += "| 転換指標 | 月間実績 |\n"
     report += "|----------|----------|\n"
-    report += f"| 候補→提案中 | {avg_koho_to_teian}% ({total_teian_chu_count}/{total_koho_teian}) |\n"
-    report += f"| 提案中→面談 | {yuuko_count}件 |\n\n"
+    report += f"| 候補→提案中 | {koho_to_teian_rate}% ({koho_to_teian_count}/{total_teian}) |\n"
+    report += f"| 提案中→面談 | {teian_to_mendan_rate}% ({teian_to_mendan_count}/{koho_to_teian_count}) |\n\n"
 
-    # 週別転換率の内訳
+    # 週別転換率の内訳 — ステータス変更履歴DBの遷移実績ベース
+    weekly_changes = status_change_analysis.get("提案", {}).get("weekly_changes", [])
+    weekly_labels = status_change_analysis.get("weekly_labels", [])
     report += "#### 週別内訳\n\n"
-    report += "| 週 | 候補 | 提案中 | 面談 | 候補→提案中率 |\n"
-    report += "|----|------|--------|------|---------------|\n"
-    for w in weeks:
-        w_total = w["提案_候補"] + w["提案_提案中"]
-        w_rate = round((w["提案_提案中"] / w_total * 100), 1) if w_total > 0 else 0
-        report += f"| {w['label']} | {w['提案_候補']}件 | {w['提案_提案中']}件 | {w['提案_面談']}件 | {w_rate}% |\n"
+    report += "| 週 | AI候補生成 | 候補→提案中 | 提案中→面談 | 候補→提案中率 |\n"
+    report += "|----|-----------|------------|------------|---------------|\n"
+    for i, w in enumerate(weeks):
+        wc = weekly_changes[i] if i < len(weekly_changes) else {}
+        w_koho_teian = wc.get("候補→提案中", 0)
+        w_teian_mendan = wc.get("提案中→面談", 0)
+        w_new = w["提案新規"]
+        w_rate = round((w_koho_teian / w_new * 100), 1) if w_new > 0 else 0
+        report += f"| {w['label']} | {w_new}件 | {w_koho_teian}件 | {w_teian_mendan}件 | {w_rate}% |\n"
     report += "\n"
 
-    if avg_koho_to_teian < 20:
+    if koho_to_teian_rate < 20:
         report += "🔴 転換率が低いです。候補案件の精査基準や判断スピードを見直しましょう。\n\n"
-    elif avg_koho_to_teian < 50:
+    elif koho_to_teian_rate < 50:
         report += "⚠️ 転換率の改善余地があります。候補案件を積極的に精査しましょう。\n\n"
     else:
         report += "✅ 転換率は良好です。現状のペースを維持しましょう。\n\n"
@@ -1198,6 +1431,83 @@ def generate_monthly_report():
 
     report += "---\n\n"
 
+    # =============================================
+    # 期限超過アラート・自動終了処理
+    # =============================================
+    report += "## ⚠️ 期限超過アラート\n\n"
+
+    total_terminated = sum(len(terminate_results[k]) for k in ["要員_terminated", "案件_terminated", "提案中_terminated", "候補_terminated"])
+
+    if total_terminated > 0:
+        report += f"### 🔄 自動終了処理（合計 {total_terminated}件）\n\n"
+        report += "以下のレコードを自動的に「終了」ステータスに変更しました。\n\n"
+
+        if terminate_results["要員_terminated"]:
+            report += f"#### 👤 要員DB（営業中 → 終了: {len(terminate_results['要員_terminated'])}件）\n\n"
+            report += "| 要員名 | 回収日 | 経過日数 | 担当 |\n"
+            report += "|--------|--------|----------|------|\n"
+            for item in terminate_results["要員_terminated"]:
+                report += f"| {item['name']} | {item['date']} | {item['days']}日 | {item['担当']} |\n"
+            report += "\n"
+
+        if terminate_results["案件_terminated"]:
+            report += f"#### 🧾 案件DB（営業中 → 終了: {len(terminate_results['案件_terminated'])}件）\n\n"
+            report += "| 案件名 | 回収日 | 経過日数 | 担当 |\n"
+            report += "|--------|--------|----------|------|\n"
+            for item in terminate_results["案件_terminated"]:
+                report += f"| {item['name']} | {item['date']} | {item['days']}日 | {item['担当']} |\n"
+            report += "\n"
+
+        if terminate_results["提案中_terminated"]:
+            report += f"#### 📋 提案DB 提案中 → 終了: {len(terminate_results['提案中_terminated'])}件\n\n"
+            report += "| 提案名 | 提案日 | 経過日数 | 案件担当 | 要員担当 |\n"
+            report += "|--------|--------|----------|----------|----------|\n"
+            for item in terminate_results["提案中_terminated"]:
+                report += f"| {item['name'] or '(未入力)'} | {item['date']} | {item['days']}日 | {item['案件担当']} | {item['要員担当']} |\n"
+            report += "\n"
+
+        if terminate_results["候補_terminated"]:
+            report += f"#### 📋 提案DB 候補 → 終了（連鎖）: {len(terminate_results['候補_terminated'])}件\n\n"
+            report += "| 提案名 | 作成日 | 案件担当 | 要員担当 |\n"
+            report += "|--------|--------|----------|----------|\n"
+            for item in terminate_results["候補_terminated"]:
+                report += f"| {item['name'] or '(未入力)'} | {item['date']} | {item['案件担当']} | {item['要員担当']} |\n"
+            report += "\n"
+    else:
+        report += "### 🔄 自動終了処理\n\n"
+        report += "自動終了対象のレコードはありませんでした。\n\n"
+
+    # 自動終了対象外の残存滞留
+    has_remaining = terminate_results["候補_remaining"] or terminate_results["要員_remaining"] or terminate_results["案件_remaining"]
+    if has_remaining:
+        report += "### ⚠️ 要確認（自動終了対象外の期限超過）\n\n"
+
+        if terminate_results["候補_remaining"]:
+            report += f"#### 📋 提案DB（候補で1週間以上滞留: {len(terminate_results['候補_remaining'])}件）\n\n"
+            report += "| 提案名 | 作成日 | 経過日数 | 案件担当 | 要員担当 |\n"
+            report += "|--------|--------|----------|----------|----------|\n"
+            for item in terminate_results["候補_remaining"]:
+                report += f"| {item['name'] or '(未入力)'} | {item['date']} | {item['days']}日 | {item['案件担当']} | {item['要員担当']} |\n"
+            report += "\n"
+
+        if terminate_results["要員_remaining"]:
+            report += f"#### 👤 要員DB（営業中以外で2週間以上経過: {len(terminate_results['要員_remaining'])}件）\n\n"
+            report += "| 要員名 | 回収日 | 経過日数 | ステータス | 担当 |\n"
+            report += "|--------|--------|----------|------------|------|\n"
+            for item in terminate_results["要員_remaining"]:
+                report += f"| {item['name']} | {item['date']} | {item['days']}日 | {item['status']} | {item['担当']} |\n"
+            report += "\n"
+
+        if terminate_results["案件_remaining"]:
+            report += f"#### 🧾 案件DB（営業中以外で2週間以上経過: {len(terminate_results['案件_remaining'])}件）\n\n"
+            report += "| 案件名 | 回収日 | 経過日数 | ステータス | 担当 |\n"
+            report += "|--------|--------|----------|------------|------|\n"
+            for item in terminate_results["案件_remaining"]:
+                report += f"| {item['name']} | {item['date']} | {item['days']}日 | {item['status']} | {item['担当']} |\n"
+            report += "\n"
+
+    report += "---\n\n"
+
     # データ駆動の月次振り返りとアクション生成
     report += "## 📝 月次振り返りと次月アクション\n\n"
 
@@ -1205,7 +1515,7 @@ def generate_monthly_report():
     report += "### 今月の実績\n\n"
     report += f"- 人的提案数（候補→提案中）: {jinteki_count}件\n"
     report += f"- 有効提案数（提案中→面談）: {yuuko_count}件\n"
-    report += f"- 候補→提案中 転換率: {avg_koho_to_teian}%\n"
+    report += f"- 候補→提案中 転換率: {koho_to_teian_rate}%\n"
     report += f"- AI候補生成: {total_teian}件（参考）\n"
     report += f"- 要員回収: {total_youin}件\n"
     report += f"- 案件回収: {total_anken}件\n\n"
@@ -1213,14 +1523,21 @@ def generate_monthly_report():
     # 週別パフォーマンス分析
     report += "### 週別パフォーマンス\n\n"
 
-    # 最も人的提案アクションが多かった週（提案中の件数ベース）
-    best_week = max(weeks, key=lambda w: w["提案_提案中"])
-    worst_week = min(weeks, key=lambda w: w["提案_提案中"])
+    # 最も人的提案アクションが多かった週（ステータス変更履歴の候補→提案中遷移ベース）
+    weekly_changes_for_perf = status_change_analysis.get("提案", {}).get("weekly_changes", [])
+    week_teian_counts = []
+    for i, w in enumerate(weeks):
+        wc = weekly_changes_for_perf[i] if i < len(weekly_changes_for_perf) else {}
+        week_teian_counts.append((w["label"], wc.get("候補→提案中", 0)))
 
-    if best_week["提案_提案中"] > 0:
-        report += f"- 最多アクション週: {best_week['label']}（人的提案{best_week['提案_提案中']}件）\n"
-    if worst_week["提案_提案中"] < best_week["提案_提案中"]:
-        report += f"- 最少アクション週: {worst_week['label']}（人的提案{worst_week['提案_提案中']}件）\n"
+    if week_teian_counts:
+        best_label, best_count = max(week_teian_counts, key=lambda x: x[1])
+        worst_label, worst_count = min(week_teian_counts, key=lambda x: x[1])
+
+        if best_count > 0:
+            report += f"- 最多アクション週: {best_label}（人的提案{best_count}件）\n"
+        if worst_count < best_count:
+            report += f"- 最少アクション週: {worst_label}（人的提案{worst_count}件）\n"
     report += "\n"
 
     # 次月の重点施策（データ駆動）
@@ -1229,9 +1546,9 @@ def generate_monthly_report():
     action_num = 1
 
     # 1. 候補→提案中の転換率改善
-    if avg_koho_to_teian < 50:
+    if koho_to_teian_rate < 50:
         report += f"{action_num}. 候補→提案中の転換率改善\n"
-        report += f"   - 今月の転換率: {avg_koho_to_teian}%\n"
+        report += f"   - 今月の転換率: {koho_to_teian_rate}%\n"
         report += "   - 候補案件の精査基準を見直し\n"
         report += "   - 判断スピードの向上\n\n"
         action_num += 1
