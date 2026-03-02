@@ -9,6 +9,7 @@ import sys
 import io
 import json
 import requests
+import time
 from datetime import datetime, timedelta
 from collections import defaultdict
 from urllib.parse import quote
@@ -129,8 +130,8 @@ def get_property_value(page, property_name):
     else:
         return ""
 
-def update_notion_status(page_id, new_status):
-    """Notionページのステータスを更新"""
+def update_notion_status(page_id, new_status, max_retries=3):
+    """Notionページのステータスを更新（リトライ付き）"""
     url = f"https://api.notion.com/v1/pages/{page_id}"
     payload = {
         "properties": {
@@ -141,13 +142,20 @@ def update_notion_status(page_id, new_status):
             }
         }
     }
-    response = requests.patch(url, headers=HEADERS, json=payload)
-    if response.status_code == 200:
-        print(f"  ✅ ステータス更新: {page_id[:8]}... → {new_status}")
-        return True
-    else:
-        print(f"  ❌ ステータス更新失敗: {page_id[:8]}... - {response.status_code}")
-        return False
+    for attempt in range(max_retries):
+        response = requests.patch(url, headers=HEADERS, json=payload)
+        if response.status_code == 200:
+            print(f"  ✅ ステータス更新: {page_id[:8]}... → {new_status}")
+            return True
+        elif response.status_code in (429, 502, 503, 504):
+            wait = 2 ** attempt
+            print(f"  ⏳ リトライ ({attempt+1}/{max_retries}): {page_id[:8]}... - {response.status_code}, {wait}秒待機")
+            time.sleep(wait)
+        else:
+            print(f"  ❌ ステータス更新失敗: {page_id[:8]}... - {response.status_code}")
+            return False
+    print(f"  ❌ リトライ上限到達: {page_id[:8]}... - {response.status_code}")
+    return False
 
 def analyze_monthly_cost():
     """月次営業コスト分析"""
@@ -723,7 +731,7 @@ def detect_and_terminate_stagnant():
                             "案件担当": get_property_value(page, "案件担当"),
                             "要員担当": get_property_value(page, "要員担当"),
                         }
-                        if update_notion_status(page["id"], "終了"):
+                        if update_notion_status(page["id"], "見送り"):
                             results["提案中_terminated"].append(item)
 
             # 候補の滞留チェック + 連鎖終了
@@ -743,7 +751,7 @@ def detect_and_terminate_stagnant():
                         "案件担当": get_property_value(page, "案件担当"),
                         "要員担当": get_property_value(page, "要員担当"),
                     }
-                    if update_notion_status(page["id"], "終了"):
+                    if update_notion_status(page["id"], "見送り"):
                         results["候補_terminated"].append(item)
                 # 候補滞留（1週間以上、連鎖対象外）
                 elif created_time:
@@ -1459,7 +1467,7 @@ def generate_monthly_report():
             report += "\n"
 
         if terminate_results["提案中_terminated"]:
-            report += f"#### 📋 提案DB 提案中 → 終了: {len(terminate_results['提案中_terminated'])}件\n\n"
+            report += f"#### 📋 提案DB 提案中 → 見送り: {len(terminate_results['提案中_terminated'])}件\n\n"
             report += "| 提案名 | 提案日 | 経過日数 | 案件担当 | 要員担当 |\n"
             report += "|--------|--------|----------|----------|----------|\n"
             for item in terminate_results["提案中_terminated"]:
@@ -1467,7 +1475,7 @@ def generate_monthly_report():
             report += "\n"
 
         if terminate_results["候補_terminated"]:
-            report += f"#### 📋 提案DB 候補 → 終了（連鎖）: {len(terminate_results['候補_terminated'])}件\n\n"
+            report += f"#### 📋 提案DB 候補 → 見送り（連鎖）: {len(terminate_results['候補_terminated'])}件\n\n"
             report += "| 提案名 | 作成日 | 案件担当 | 要員担当 |\n"
             report += "|--------|--------|----------|----------|\n"
             for item in terminate_results["候補_terminated"]:
