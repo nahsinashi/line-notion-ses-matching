@@ -308,17 +308,23 @@ function processPostbackEvent(event) {
     return { error: 'Missing parameters' };
   }
 
-  // 承認待ちデータを取得
-  const pendingData = getPendingApproval(proposalId);
-  if (!pendingData) {
-    sendPushMessage(userId, '⚠️ この候補は期限切れまたは既に処理済みです。');
-    return { error: 'Pending data not found' };
+  // Notion APIから提案データを直接取得（キャッシュ依存を廃止）
+  const matchData = getMatchDataFromProposal(proposalId);
+  if (!matchData) {
+    sendPushMessage(userId, '⚠️ 提案データの取得に失敗しました。');
+    return { error: 'Failed to fetch proposal data from Notion' };
+  }
+
+  // 処理済みチェック（gas-adminのキャッシュで管理）
+  if (isProposalProcessed(proposalId)) {
+    sendPushMessage(userId, '⚠️ この候補は既に処理済みです。');
+    return { error: 'Already processed' };
   }
 
   if (action === 'approve') {
-    return processApproval(proposalId, pendingData);
+    return processApproval(proposalId, matchData);
   } else if (action === 'reject') {
-    return processRejection(proposalId, pendingData);
+    return processRejection(proposalId, matchData);
   }
 
   return { error: 'Unknown action' };
@@ -369,8 +375,8 @@ function processApproval(proposalId, pendingData) {
       `返答があれば転送します。`
     );
 
-    // 承認待ちデータを削除
-    clearPendingApproval(proposalId);
+    // 処理済みとしてキャッシュに記録
+    markProposalProcessed(proposalId, 'approved');
 
     return { success: true, action: 'approved' };
   } else {
@@ -388,13 +394,85 @@ function processApproval(proposalId, pendingData) {
 function processRejection(proposalId, pendingData) {
   console.log(`❌ 却下処理: ${proposalId}`);
 
-  // 承認待ちデータを削除
-  clearPendingApproval(proposalId);
+  // Notionの提案ステータスを「見送り」に更新
+  updateProposalStatus(proposalId, '見送り');
 
-  // ※却下通知は廃止（ボタンを押した本人がわかっているため、LINE通知数を節約）
+  // 処理済みとしてキャッシュに記録
+  markProposalProcessed(proposalId, 'rejected');
+
   console.log(`✅ 却下処理完了: 案件=${pendingData.caseName}, 要員=${pendingData.staffName}`);
 
   return { success: true, action: 'rejected' };
+}
+
+// ====== Notionステータス更新 ======
+
+/**
+ * 提案ページのステータスを更新（既存の選択肢のみ使用）
+ * @param {string} proposalId - 提案ページID
+ * @param {string} status - 新しいステータス（'見送り' 等、提案DBに既存の選択肢）
+ */
+function updateProposalStatus(proposalId, status) {
+  const url = `https://api.notion.com/v1/pages/${proposalId.replace(/-/g, '')}`;
+
+  const payload = {
+    properties: {
+      'ステータス': {
+        select: { name: status }
+      }
+    }
+  };
+
+  const options = {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${NOTION_API_KEY}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json'
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    if (response.getResponseCode() === 200) {
+      console.log(`✅ 提案ステータス更新: ${proposalId} → ${status}`);
+    } else {
+      console.error(`❌ ステータス更新エラー: ${response.getResponseCode()}`, response.getContentText());
+    }
+  } catch (error) {
+    console.error('❌ ステータス更新例外:', error);
+  }
+}
+
+// ====== 処理済み管理（gas-adminキャッシュ）======
+
+const PROCESSED_PREFIX = 'processed_';
+// 処理済みキャッシュの有効期間（秒）- 7日
+const PROCESSED_EXPIRATION = 604800;
+
+/**
+ * 提案を処理済みとして記録
+ * @param {string} proposalId - 提案ページID
+ * @param {string} action - 'approved' または 'rejected'
+ */
+function markProposalProcessed(proposalId, action) {
+  const cache = CacheService.getScriptCache();
+  const key = PROCESSED_PREFIX + proposalId.replace(/-/g, '');
+  cache.put(key, action, PROCESSED_EXPIRATION);
+  console.log(`✅ 処理済み記録: ${proposalId} → ${action}`);
+}
+
+/**
+ * 提案が処理済みかどうか判定
+ * @param {string} proposalId - 提案ページID
+ * @returns {boolean} 処理済みならtrue
+ */
+function isProposalProcessed(proposalId) {
+  const cache = CacheService.getScriptCache();
+  const key = PROCESSED_PREFIX + proposalId.replace(/-/g, '');
+  return !!cache.get(key);
 }
 
 // ====== パートナーへのメッセージ送信（トラッキング付き）======
