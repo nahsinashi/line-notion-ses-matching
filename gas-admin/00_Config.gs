@@ -12,9 +12,13 @@
  *   - GEMINI_API_KEY
  *   - OPENAI_API_KEY
  *   - ADMIN_LINE_USER_ID
+ *   - NOTION_API_KEY
  */
 
 // ====== 設定値 ======
+
+// Notion API設定
+const NOTION_API_KEY = PropertiesService.getScriptProperties().getProperty('NOTION_API_KEY');
 
 // LINE設定
 const LINE_CHANNEL_ACCESS_TOKEN = PropertiesService.getScriptProperties().getProperty('LINE_CHANNEL_ACCESS_TOKEN');
@@ -46,7 +50,8 @@ function checkConfig() {
     'CLAUDE_API_KEY',
     'GEMINI_API_KEY',
     'OPENAI_API_KEY',
-    'ADMIN_LINE_USER_ID'
+    'ADMIN_LINE_USER_ID',
+    'NOTION_API_KEY'
   ];
 
   console.log('=== 設定状況 ===');

@@ -32,7 +32,7 @@
 const TEMP_SAVE_TIMEOUT_MS = 5 * 60 * 1000;  // 5分
 
 // デバッグモード（trueで詳細通知を送信）
-const DEBUG_MODE = true;
+const DEBUG_MODE = false;
 
 /**
  * デバッグ通知を送信（DEBUG_MODEがtrueの場合のみ）
@@ -1276,7 +1276,18 @@ function doPost(e) {
         Logger.log("🏢 マッピングから企業名取得: " + companyName);
       } else {
         Logger.log("⚠️ マッピング未登録: " + userId);
-        companyName = "LINE:" + userId.substring(0, 10) + "...";
+        companyName = "LINE:" + userId;
+
+        // 管理者に未マッピングのUserIDを通知（マッピング登録用）
+        const adminUserId = getAdminLineUserId();
+        if (adminUserId) {
+          sendLineNotification(adminUserId,
+            `🆕 未登録パートナーからの送信\n\n` +
+            `UserID:\n${userId}\n\n` +
+            `登録タイプ: ${registrationType}\n` +
+            `※GASエディタで addLineUserMapping("${userId}", "企業名") を実行してマッピングを追加してください`
+          );
+        }
       }
     }
 
