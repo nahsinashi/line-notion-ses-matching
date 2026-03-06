@@ -1633,13 +1633,21 @@ def create_notion_page(report_content, parent_page_id=None):
             i += 1
             continue
 
-        # 見出し
-        if line.startswith('# '):
+        # 見出し（長いプレフィックスから判定。Notionはheading_3までなので####以上はheading_3にマッピング）
+        if line.startswith('#### '):
             blocks.append({
                 "object": "block",
-                "type": "heading_1",
-                "heading_1": {
-                    "rich_text": [{"type": "text", "text": {"content": line[2:]}}]
+                "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": line[5:]}}]
+                }
+            })
+        elif line.startswith('### '):
+            blocks.append({
+                "object": "block",
+                "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": line[4:]}}]
                 }
             })
         elif line.startswith('## '):
@@ -1650,12 +1658,12 @@ def create_notion_page(report_content, parent_page_id=None):
                     "rich_text": [{"type": "text", "text": {"content": line[3:]}}]
                 }
             })
-        elif line.startswith('### '):
+        elif line.startswith('# '):
             blocks.append({
                 "object": "block",
-                "type": "heading_3",
-                "heading_3": {
-                    "rich_text": [{"type": "text", "text": {"content": line[4:]}}]
+                "type": "heading_1",
+                "heading_1": {
+                    "rich_text": [{"type": "text", "text": {"content": line[2:]}}]
                 }
             })
         # 画像
