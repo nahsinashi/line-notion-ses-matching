@@ -1,3 +1,19 @@
+/**
+ * 02_フォーム選択肢更新スクリプト.gs
+ *
+ * 【機能概要】
+ * Notion DBの最新データをもとに、Googleフォームの選択肢を動的に更新
+ *
+ * 【処理フロー】
+ * 1. Notion DB（案件/要員/提案）をページネーション対応で全件取得
+ * 2. 各DBのスキーマからプロパティ名・選択肢を抽出
+ * 3. Googleフォームの該当フィールドに選択肢を反映
+ *
+ * 【実行タイミング】
+ * - フォーム送信後に自動実行（01_フォーム送信時の処理スクリプト.gs から呼び出し）
+ * - 手動実行: updateFormChoices()
+ */
+
 /** * Notion APIでデータベースを検索（ページネーション対応） */
 function queryNotionDatabase(databaseId) {
   const url = `https://api.notion.com/v1/databases/${databaseId}/query`;

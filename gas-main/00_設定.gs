@@ -1,5 +1,18 @@
-// 共通設定
-// ※ 各値は自分の環境に合わせて書き換えてください
+/**
+ * 00_設定.gs - 共通設定・定数定義
+ *
+ * 【概要】
+ * プロジェクト全体で使用するAPIキー・データベースIDを定義
+ *
+ * 【設定項目】
+ * - Notion API Key（Integration Token）
+ * - Google フォーム ID
+ * - 各Notion DB ID（案件/要員/提案）
+ * - Claude / Gemini API Key
+ * - プロンプト管理スプレッドシート ID
+ *
+ * ※ 各値は自分の環境に合わせて書き換えてください
+ */
 
 // Notion API Key（Notion Integration Token）
 const NOTION_API_KEY = "YOUR_NOTION_API_KEY";
