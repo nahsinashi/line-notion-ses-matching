@@ -189,7 +189,7 @@ function matchStaffWithCases(staffPageId, staffData) {
 
     const matchResult = executeMatching(caseItem, staffData, skillSheetDoc);
 
-    if (matchResult && matchResult.score >= 60) {
+    if (matchResult && matchResult.score >= 70) {
       // 提案DBに候補として登録
       createMatchCandidate(caseItem.id, staffPageId, matchResult);
     }
@@ -229,7 +229,7 @@ function matchCaseWithStaff(casePageId, caseData) {
 
     const matchResult = executeMatching(caseData, staff.data, skillSheetDoc);
 
-    if (matchResult && matchResult.score >= 60) {
+    if (matchResult && matchResult.score >= 70) {
       createMatchCandidate(casePageId, staff.id, matchResult);
     }
   });
@@ -442,7 +442,7 @@ function parseMatchingResult(text) {
   
   if (!judgmentMatch) {
     // 見送りとして扱う（ログ表示のみ変更）
-    Logger.log("→ 見送り（単価NGまたは60点未満）");
+    Logger.log("→ 見送り（単価NGまたは70点未満）");
     return null;
   }
   
@@ -500,9 +500,13 @@ function createMatchCandidate(caseId, staffId, matchResult) {
     if (response.getResponseCode() === 200) {
       Logger.log("✅ 提案候補登録: " + matchResult.judgment + "（" + matchResult.score + "点）");
 
-      // LINE通知
-      const result = JSON.parse(response.getContentText());
-      notifyProposalToAdmin(result.id, "候補", matchResult.detail);
+      // LINE通知（85点以上のみ）
+      if (matchResult.score >= 85) {
+        const result = JSON.parse(response.getContentText());
+        notifyProposalToAdmin(result.id, "候補", matchResult.detail);
+      } else {
+        Logger.log("📝 LINE通知スキップ（85点未満: " + matchResult.score + "点）");
+      }
     } else {
       Logger.log("❌ 提案登録エラー: " + response.getResponseCode());
       Logger.log(response.getContentText());
@@ -563,13 +567,13 @@ function testMatching() {
     Logger.log("--- 詳細 ---");
     Logger.log(matchResult.detail);
     
-    // 60点以上なら提案DB登録するか確認
-    if (matchResult.score >= 60) {
-      Logger.log("✅ 提案候補として登録可能（60点以上）");
+    // 70点以上なら提案DB登録するか確認
+    if (matchResult.score >= 70) {
+      Logger.log("✅ 提案候補として登録可能（70点以上）");
       // 実際に登録したい場合は以下のコメントを外す
       createMatchCandidate(testCasePageId, testStaffPageId, matchResult);
     } else {
-      Logger.log("⚠️ 見送り（60点未満）");
+      Logger.log("⚠️ 見送り（70点未満）");
     }
   } else {
     Logger.log("❌ マッチング失敗");
