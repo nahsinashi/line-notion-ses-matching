@@ -267,6 +267,43 @@ class NotionClient:
         """Proposals DB から指定ステータスのエントリを取得"""
         return self.query_database("proposals", {"property": "ステータス", "select": {"equals": status}})
 
+    def get_proposal_detail(self, proposal_page_id):
+        """Proposal とリレーション先の案件・要員データをまとめて取得"""
+        page = self.get_page(proposal_page_id)
+        proposal = extract_page_data(page)
+
+        # relation から案件・要員の page_id を取得
+        props = page.get("properties", {})
+        case_ids = [r["id"] for r in props.get("案件DB", {}).get("relation", [])]
+        staff_ids = [r["id"] for r in props.get("要員DB", {}).get("relation", [])]
+
+        case_data = extract_page_data(self.get_page(case_ids[0])) if case_ids else {}
+        staff_data = extract_page_data(self.get_page(staff_ids[0])) if staff_ids else {}
+
+        # 送信先 userId を解決
+        staff_company = staff_data.get("要員元企業", "")
+        case_company = case_data.get("案件元企業", "")
+
+        return {
+            "proposal": proposal,
+            "case": case_data,
+            "staff": staff_data,
+            "staff_company_user_id": resolve_user_id(staff_company),
+            "case_company_user_id": resolve_user_id(case_company),
+        }
+
+    def is_action_done(self, page_id, action_keyword):
+        """履歴DBで特定アクションが実行済みか確認（重複送信防止）"""
+        if not self.history_db_id:
+            return False
+        result = self.query_database("history", {
+            "and": [
+                {"property": "対象ページID", "rich_text": {"equals": page_id}},
+                {"property": "変更理由", "rich_text": {"contains": action_keyword}},
+            ]
+        })
+        return len(result.get("results", [])) > 0
+
     def update_proposal_status(self, page_id, new_status, reason=""):
         """Proposal のステータスを更新し、履歴を記録"""
         page = self.get_page(page_id)
@@ -509,6 +546,22 @@ def resolve_company_name(user_id):
     """LINE UserIDから企業名を解決"""
     mapping = load_line_mapping()
     return mapping.get(user_id, "")
+
+
+def resolve_user_id(company_name):
+    """企業名からLINE UserIDを逆引き（部分一致）"""
+    mapping = load_line_mapping()
+    # 正規化: 株式会社等を除去して比較
+    def normalize(name):
+        for prefix in ("株式会社", "(株)", "（株）"):
+            name = name.replace(prefix, "")
+        return name.strip()
+
+    target = normalize(company_name)
+    for uid, name in mapping.items():
+        if normalize(name) == target:
+            return uid
+    return ""
 
 
 # =========================================================
