@@ -140,13 +140,15 @@ class NotionClient:
         entries = []
         for page in pages:
             data = extract_page_data(page)
+            file_urls = data.get("添付ファイル", []) or []
             entry = {
                 "page_id": data["page_id"],
                 "userId": data.get("userId", ""),
                 "source": data.get("入力経路", ""),
                 "raw_text": data.get("原文", ""),
                 "created_time": page.get("created_time", ""),
-                "has_file": bool(data.get("添付ファイル")),
+                "has_file": bool(file_urls),
+                "file_urls": file_urls if isinstance(file_urls, list) else [],
             }
             entries.append(entry)
 
@@ -177,12 +179,16 @@ class NotionClient:
         for group_entries in groups:
             user_id = group_entries[0]["userId"]
             combined = "\n---\n".join(e["raw_text"] for e in group_entries if e["raw_text"])
+            all_files = []
+            for e in group_entries:
+                all_files.extend(e.get("file_urls", []))
             result_groups.append({
                 "userId": user_id,
                 "company": resolve_company_name(user_id) if user_id else "",
                 "source": group_entries[0]["source"],
                 "entries": group_entries,
                 "combined_text": combined,
+                "file_urls": all_files,
             })
 
         return result_groups
@@ -217,7 +223,7 @@ class NotionClient:
     # Staff 操作
     # =========================================================
 
-    def create_staff(self, data, raw_text, company, source="手動"):
+    def create_staff(self, data, raw_text, company, source="手動", file_urls=None):
         """Staff DB に要員ページを作成"""
         properties = {
             "要員名": _title(data.get("要員名", " ")),
@@ -231,6 +237,8 @@ class NotionClient:
         _add_if(properties, "スキル詳細", _rich_text, data.get("スキル詳細"))
         _add_if(properties, "営業単価", _number, data.get("営業単価"))
         _add_if(properties, "稼働開始", _date, data.get("稼働開始"))
+        if file_urls:
+            properties["スキルシート"] = {"files": [{"type": "external", "name": f"スキルシート{i+1}", "external": {"url": url}} for i, url in enumerate(file_urls)]}
 
         return self._post("pages", {"parent": {"database_id": self.staff_db_id}, "properties": properties})
 
@@ -534,6 +542,15 @@ def extract_page_data(page):
             data[key] = d["start"] if d else None
         elif ptype == "url":
             data[key] = prop.get("url", "")
+        elif ptype == "files":
+            files = prop.get("files", [])
+            urls = []
+            for f in files:
+                if f.get("type") == "external":
+                    urls.append(f["external"]["url"])
+                elif f.get("type") == "file":
+                    urls.append(f["file"]["url"])
+            data[key] = urls
 
     return data
 
