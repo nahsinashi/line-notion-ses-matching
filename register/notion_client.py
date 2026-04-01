@@ -548,6 +548,32 @@ def resolve_company_name(user_id):
     return mapping.get(user_id, "")
 
 
+def add_line_mapping(user_id, company_name):
+    """LINE UserID → 企業名マッピングを追加"""
+    project_root = Path(__file__).parent.parent
+    mapping_path = project_root / "config" / "line-user-mapping.json"
+
+    data = {}
+    if mapping_path.exists():
+        with open(mapping_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+    data[user_id] = company_name
+
+    with open(mapping_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return company_name
+
+
+def is_unmapped_user(user_id):
+    """userIdがマッピング未登録かどうか"""
+    if not user_id:
+        return False
+    mapping = load_line_mapping()
+    return user_id not in mapping
+
+
 def resolve_user_id(company_name):
     """企業名からLINE UserIDを逆引き（部分一致）"""
     mapping = load_line_mapping()
@@ -625,6 +651,12 @@ def main():
             preview = g["combined_text"][:200].encode("cp932", errors="replace").decode("cp932")
             print(f"\n--- Group {i}: {label} ({n}件{file_mark}) ---")
             print(preview)
+
+    elif cmd == "add-mapping" and len(sys.argv) > 3:
+        user_id = sys.argv[2]
+        company = sys.argv[3]
+        add_line_mapping(user_id, company)
+        print(f"マッピング追加: {user_id} -> {company}")
 
     elif cmd == "resolve-user" and len(sys.argv) > 2:
         user_id = sys.argv[2]
