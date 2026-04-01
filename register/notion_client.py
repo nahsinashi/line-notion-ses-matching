@@ -112,6 +112,81 @@ class NotionClient:
         """Inbox エントリを「エラー」に更新"""
         return self._patch(f"pages/{page_id}", {"properties": {"ステータス": _select("エラー")}})
 
+    def archive_page(self, page_id):
+        """Notionページをアーカイブ（削除）"""
+        return self._patch(f"pages/{page_id}", {"archived": True})
+
+    def get_grouped_inbox(self, window_minutes=10):
+        """未処理Inboxエントリを userId + 時間近接でグルーピングして返す
+
+        Returns:
+            list[dict]: 各グループは以下の形式:
+                {
+                    "userId": str,
+                    "company": str,       # マッピングから解決した企業名
+                    "source": str,        # 入力経路
+                    "entries": [          # 時間順のエントリリスト
+                        {"page_id": str, "raw_text": str, "created_time": str, "has_file": bool}
+                    ],
+                    "combined_text": str, # 全エントリの原文を結合
+                }
+        """
+        result = self.get_unprocessed_inbox()
+        pages = result.get("results", [])
+        if not pages:
+            return []
+
+        # ページデータを抽出し created_time でソート
+        entries = []
+        for page in pages:
+            data = extract_page_data(page)
+            entry = {
+                "page_id": data["page_id"],
+                "userId": data.get("userId", ""),
+                "source": data.get("入力経路", ""),
+                "raw_text": data.get("原文", ""),
+                "created_time": page.get("created_time", ""),
+                "has_file": bool(data.get("添付ファイル")),
+            }
+            entries.append(entry)
+
+        entries.sort(key=lambda e: e["created_time"])
+
+        # userId ごとにグルーピング → 時間窓で分割
+        from collections import defaultdict
+        by_user = defaultdict(list)
+        for entry in entries:
+            key = entry["userId"] or entry["page_id"]  # userId無しは個別扱い
+            by_user[key].append(entry)
+
+        groups = []
+        for user_key, user_entries in by_user.items():
+            current_group = [user_entries[0]]
+            for entry in user_entries[1:]:
+                prev_time = _parse_time(current_group[-1]["created_time"])
+                curr_time = _parse_time(entry["created_time"])
+                if prev_time and curr_time and (curr_time - prev_time).total_seconds() <= window_minutes * 60:
+                    current_group.append(entry)
+                else:
+                    groups.append(current_group)
+                    current_group = [entry]
+            groups.append(current_group)
+
+        # グループを構造化
+        result_groups = []
+        for group_entries in groups:
+            user_id = group_entries[0]["userId"]
+            combined = "\n---\n".join(e["raw_text"] for e in group_entries if e["raw_text"])
+            result_groups.append({
+                "userId": user_id,
+                "company": resolve_company_name(user_id) if user_id else "",
+                "source": group_entries[0]["source"],
+                "entries": group_entries,
+                "combined_text": combined,
+            })
+
+        return result_groups
+
     # =========================================================
     # Cases 操作
     # =========================================================
@@ -379,6 +454,20 @@ def _add_if(props, key, fn, value, *args):
         props[key] = fn(value, *args) if args else fn(value)
 
 
+def _parse_time(iso_str):
+    """ISO 8601文字列をdatetimeに変換（Notion形式対応）"""
+    if not iso_str:
+        return None
+    try:
+        # "2026-03-31T08:32:00.000Z" 形式
+        clean = iso_str.replace("Z", "+00:00")
+        if "." in clean:
+            clean = clean.split(".")[0] + clean[clean.rfind("+"):]
+        return datetime.fromisoformat(clean)
+    except (ValueError, IndexError):
+        return None
+
+
 # =========================================================
 # ページデータ抽出ヘルパー
 # =========================================================
@@ -471,6 +560,18 @@ def main():
         for page in entries:
             d = extract_page_data(page)
             print(json.dumps(d, ensure_ascii=False, indent=2))
+
+    elif cmd == "grouped-inbox":
+        groups = client.get_grouped_inbox()
+        print(f"グループ数: {len(groups)}")
+        for i, g in enumerate(groups, 1):
+            label = g["company"] or g["userId"] or "不明"
+            n = len(g["entries"])
+            has_file = any(e["has_file"] for e in g["entries"])
+            file_mark = " [+file]" if has_file else ""
+            preview = g["combined_text"][:200].encode("cp932", errors="replace").decode("cp932")
+            print(f"\n--- Group {i}: {label} ({n}件{file_mark}) ---")
+            print(preview)
 
     elif cmd == "resolve-user" and len(sys.argv) > 2:
         user_id = sys.argv[2]
