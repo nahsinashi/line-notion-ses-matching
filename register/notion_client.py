@@ -251,9 +251,9 @@ class NotionClient:
         if file_urls:
             staff_name = data.get("要員名", "不明")
             if len(file_urls) == 1:
-                files = [{"type": "external", "name": f"SS_{staff_name}", "external": {"url": file_urls[0]}}]
+                files = [{"type": "external", "name": f"スキルシート_{staff_name}", "external": {"url": file_urls[0]}}]
             else:
-                files = [{"type": "external", "name": f"SS_{staff_name}_{i+1}", "external": {"url": url}} for i, url in enumerate(file_urls)]
+                files = [{"type": "external", "name": f"スキルシート_{staff_name}_{i+1}", "external": {"url": url}} for i, url in enumerate(file_urls)]
             properties["スキルシート"] = {"files": files}
 
         return self._post("pages", {"parent": {"database_id": self.staff_db_id}, "properties": properties})
