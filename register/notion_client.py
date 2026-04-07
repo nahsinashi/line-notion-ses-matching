@@ -249,7 +249,12 @@ class NotionClient:
         _add_if(properties, "営業単価", _number, data.get("営業単価"))
         _add_if(properties, "稼働開始", _date, data.get("稼働開始"))
         if file_urls:
-            properties["スキルシート"] = {"files": [{"type": "external", "name": f"スキルシート{i+1}", "external": {"url": url}} for i, url in enumerate(file_urls)]}
+            staff_name = data.get("要員名", "不明")
+            if len(file_urls) == 1:
+                files = [{"type": "external", "name": f"SS_{staff_name}", "external": {"url": file_urls[0]}}]
+            else:
+                files = [{"type": "external", "name": f"SS_{staff_name}_{i+1}", "external": {"url": url}} for i, url in enumerate(file_urls)]
+            properties["スキルシート"] = {"files": files}
 
         return self._post("pages", {"parent": {"database_id": self.staff_db_id}, "properties": properties})
 
