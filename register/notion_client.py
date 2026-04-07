@@ -141,11 +141,22 @@ class NotionClient:
         for page in pages:
             data = extract_page_data(page)
             file_urls = data.get("添付ファイル", []) or []
+            raw_text = data.get("原文", "")
+
+            # 原文が2000文字ちょうど → ページ本文(blocks)から全文取得を試みる
+            if len(raw_text) >= 2000:
+                try:
+                    full_text = self.get_page_full_text(data["page_id"])
+                    if full_text and len(full_text) > len(raw_text):
+                        raw_text = full_text
+                except Exception:
+                    pass  # blocks取得失敗時はプロパティの原文をそのまま使う
+
             entry = {
                 "page_id": data["page_id"],
                 "userId": data.get("userId", ""),
                 "source": data.get("入力経路", ""),
-                "raw_text": data.get("原文", ""),
+                "raw_text": raw_text,
                 "created_time": page.get("created_time", ""),
                 "has_file": bool(file_urls),
                 "file_urls": file_urls if isinstance(file_urls, list) else [],
@@ -445,6 +456,26 @@ class NotionClient:
         resp = requests.get(url, headers=self.headers)
         resp.raise_for_status()
         return resp.json()
+
+    def get_page_blocks(self, page_id):
+        """ページのブロック（本文）を取得"""
+        url = f"{NOTION_API_URL}/blocks/{page_id}/children"
+        resp = requests.get(url, headers=self.headers, params={"page_size": 100})
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_page_full_text(self, page_id):
+        """ページ本文からテキストを結合して取得（原文2000文字超対応）"""
+        blocks = self.get_page_blocks(page_id)
+        lines = []
+        for block in blocks.get("results", []):
+            block_type = block.get("type", "")
+            if block_type in ("paragraph", "heading_1", "heading_2", "heading_3",
+                              "bulleted_list_item", "numbered_list_item"):
+                rich_text = block.get(block_type, {}).get("rich_text", [])
+                text = "".join(t.get("plain_text", "") for t in rich_text)
+                lines.append(text)
+        return "\n".join(lines)
 
 
 # =========================================================

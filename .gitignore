@@ -1,5 +1,6 @@
 # === Claude Code ===
 .claude/
+!.claude/commands/
 
 # === 設計ドキュメント（内部用） ===
 PLAN.md
@@ -19,6 +20,8 @@ broadcast-skill/pickup_result.json
 
 # === 環境依存の設定（シークレット含む可能性） ===
 .env
+config/register-config.json
+config/line-user-mapping.json
 broadcast-skill/config.json
 broadcast-skill/broadcast_history.json
 
