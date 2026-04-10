@@ -66,9 +66,11 @@ function processEvent(event) {
   if (message.type === "text") {
     return processTextMessage(message.text, userId);
   } else if (message.type === "file" || message.type === "image") {
+    logToSheet("event_received", { type: message.type, messageId: message.id, fileName: message.fileName, userId: userId });
     return processFileMessage(message, userId);
   }
 
+  logToSheet("event_skipped", { type: message.type, messageType: message.type, userId: userId });
   return null;
 }
 
@@ -87,13 +89,6 @@ function processTextMessage(text, userId) {
 // =========================================================
 
 function processFileMessage(message, userId) {
-  // LINE APIからファイル取得
-  const blob = getLineFileContent(message.id);
-  if (!blob) {
-    Logger.log("ファイル取得失敗: " + message.id);
-    return null;
-  }
-
   // ファイル名の決定
   let fileName = "file";
   if (message.type === "file" && message.fileName) {
@@ -102,13 +97,29 @@ function processFileMessage(message, userId) {
     fileName = "image_" + message.id + ".jpg";
   }
 
-  // Google Driveに保存
-  const fileInfo = saveFileToDrive(blob, fileName);
+  // LINE APIからファイル取得 → Drive保存
+  let fileUrl = null;
+  try {
+    logToSheet("file_download_start", { messageId: message.id, fileName: fileName });
+    const blob = getLineFileContent(message.id);
+    if (blob) {
+      logToSheet("file_download_ok", { messageId: message.id, blobSize: blob.getBytes().length, contentType: blob.getContentType() });
+      const fileInfo = saveFileToDrive(blob, fileName);
+      fileUrl = fileInfo.url;
+      logToSheet("file_save_ok", { messageId: message.id, fileUrl: fileUrl });
+    } else {
+      logToSheet("file_download_fail", { messageId: message.id, fileName: fileName, reason: "blob=null" });
+    }
+  } catch (error) {
+    logToSheet("file_save_error", { messageId: message.id, fileName: fileName, error: error.message });
+  }
 
-  // Inboxに登録（原文はファイル情報、添付ファイルURLを記録）
-  const rawText = "（ファイル添付）" + fileName;
-  const pageId = createInboxEntry(rawText, "LINE", userId, fileInfo.url);
-  Logger.log(`Inbox登録 (ファイル): ${pageId} / ${fileName}`);
+  // ファイル取得の成否にかかわらず、Inboxには必ず登録する
+  const rawText = fileUrl
+    ? "（ファイル添付）" + fileName
+    : "（ファイル添付・取得失敗）" + fileName;
+  const pageId = createInboxEntry(rawText, "LINE", userId, fileUrl);
+  Logger.log(`Inbox登録 (ファイル): ${pageId} / ${fileName} / URL: ${fileUrl || "なし"}`);
   return { type: "file", pageId: pageId, fileName: fileName };
 }
 
@@ -125,13 +136,14 @@ function getLineFileContent(messageId) {
       muteHttpExceptions: true
     });
 
-    if (response.getResponseCode() === 200) {
+    const code = response.getResponseCode();
+    if (code === 200) {
       return response.getBlob();
     }
-    Logger.log(`ファイル取得エラー: ${response.getResponseCode()}`);
+    logToSheet("line_api_error", { messageId: messageId, statusCode: code, body: response.getContentText().substring(0, 500) });
     return null;
   } catch (error) {
-    Logger.log("getLineFileContent error: " + error.message);
+    logToSheet("line_api_exception", { messageId: messageId, error: error.message });
     return null;
   }
 }
