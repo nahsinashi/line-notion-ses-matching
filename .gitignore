@@ -1,6 +1,6 @@
 # === Claude Code ===
-.claude/
-!.claude/commands/
+.claude/*
+!.claude/skills/
 
 # === 設計ドキュメント（内部用） ===
 PLAN.md

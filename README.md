@@ -81,6 +81,8 @@ line-notion-matching/
 ├── .claude/commands/            # Claude Codeスキル
 │   ├── process-queue.md         #   /process-queue — 定期実行
 │   └── broadcast.md             #   /broadcast — 配信
+├── .claude/skills/
+│   └── ses-match/SKILL.md       #   マッチング判定（オンデマンド）
 ├── broadcast-skill/             # 配信用Pythonスクリプト
 ├── gas-main/                    # 旧GAS（メンバー向けフォーム維持）
 ├── gas-admin/                   # 旧GAS（停止済み・参照用）
@@ -108,6 +110,7 @@ line-notion-matching/
 |---------|------|
 | `/process-queue` | 定期実行: Inbox処理 → 整形登録 → マッチング → 打診/提案 → 棚卸し |
 | `/broadcast` | LINE配信: 案件・要員のスコアリング → 候補ピックアップ → 配信 |
+| `ses-match` | 案件×要員のマッチング判定（「この案件とこの人、合う？」と聞く）。貼り付けた文か Notion のページを読み、点数と根拠を出す。判定のみで登録はしない |
 
 ## 使用技術
 
